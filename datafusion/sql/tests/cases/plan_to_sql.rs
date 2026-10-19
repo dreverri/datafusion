@@ -1490,6 +1490,54 @@ fn test_table_scan_with_empty_projection_and_filter_default_dialect() {
     );
 }
 
+/// A `Projection` node with no expressions, as `optimize_projections`
+/// leaves under `count(*)` when the filter column isn't otherwise needed.
+fn filter_with_empty_projection_helper() -> LogicalPlanBuilder {
+    table_scan(Some("table"), &test_schema(), None)
+        .unwrap()
+        .filter(col("id").gt(lit(10)))
+        .unwrap()
+        .project(Vec::<Expr>::new())
+        .unwrap()
+}
+
+#[test]
+fn test_empty_projection_node_default_dialect() {
+    let plan = filter_with_empty_projection_helper().build().unwrap();
+    let unparser = Unparser::new(&UnparserDefaultDialect {});
+    let sql = unparser.plan_to_sql(&plan).unwrap();
+    assert_snapshot!(
+        sql,
+        @r#"SELECT 1 FROM "table" WHERE ("table".id > 10)"#
+    );
+}
+
+#[test]
+fn test_empty_projection_node_postgres() {
+    let plan = filter_with_empty_projection_helper().build().unwrap();
+    let unparser = Unparser::new(&UnparserPostgreSqlDialect {});
+    let sql = unparser.plan_to_sql(&plan).unwrap();
+    assert_snapshot!(
+        sql,
+        @r#"SELECT FROM "table" WHERE ("table"."id" > 10)"#
+    );
+}
+
+#[test]
+fn test_count_over_empty_projection_node_bigquery() {
+    let plan = filter_with_empty_projection_helper()
+        .aggregate(Vec::<Expr>::new(), vec![count_udaf().call(vec![lit(1)])])
+        .unwrap()
+        .build()
+        .unwrap();
+    let unparser = Unparser::new(&BigQueryDialect {});
+    let sql = unparser.plan_to_sql(&plan).unwrap();
+    assert_snapshot!(
+        sql,
+        @"SELECT COUNT(1) FROM (SELECT 1 FROM `table` WHERE (`table`.`id` > 10))"
+    );
+}
+
 fn table_scan_with_empty_projection_and_none_projection_helper(
     table_name: &str,
     table_schema: Schema,
